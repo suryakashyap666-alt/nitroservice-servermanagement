@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: nitro-server-manager
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NITRO_DATA_DIR
+        value: /var/data
+      - key: WEB_CLIENT_ORIGIN
+        sync: false
+      - key: NITRO_JWT_SECRET
+        generateValue: true
+    disk:
+      name: nitro-server-data
+      mountPath: /var/data
+      sizeGB: 1

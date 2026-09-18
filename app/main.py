@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+from typing import Optional
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from brain.core import CoreBrain
+from legacy.bots_engine import BotMarketplaceEngine
+from legacy.image.image_api import router as image_router
+from legacy.puzzle.puzzle_images_api import router as puzzle_router
+
+from app.api.routes import router as chat_v1_router
+from app.api.health import router as health_v1_router
+from app.api.models import router as models_v1_router
+from app.api.providers import router as providers_v1_router
+from app.api.server_guard import configure as configure_server_guard
+from app.api.server_guard import router as server_guard_router
+from app.server_guard import build_guard
+
+DATA_DIR = os.environ.get("NITRO_DATA_DIR") or str(BASE_DIR / "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+STATE_FILE = os.path.join(DATA_DIR, "nitro_state.json")
+
+BOT_MARKET = BotMarketplaceEngine(storage_path=STATE_FILE)
+BOT_MARKET.ensure_default_bots()
+BRAIN = CoreBrain(storage_path=STATE_FILE, bot_market=BOT_MARKET)
+SERVER_GUARD = build_guard(DATA_DIR)
+configure_server_guard(SERVER_GUARD)
+
+app = FastAPI(
+    title="Nitro Infinity AI — Engine & API",
+    version="1.0.0",
+    description="Native, self-contained AI engine powering Nitro AI.",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "WEB_CLIENT_ORIGIN",
+        "",
+    ).split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS if "*" not in ALLOWED_ORIGINS else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.state.brain = BRAIN
+app.state.bot_market = BOT_MARKET
+
+# Mount API v1 Routers
+app.include_router(chat_v1_router)
+app.include_router(health_v1_router)
+app.include_router(models_v1_router)
+app.include_router(providers_v1_router)
+app.include_router(server_guard_router)
+
+# Mount Studio Routers
+app.include_router(image_router)
+app.include_router(puzzle_router)
+
+
+@app.get("/")
+def root() -> dict:
+    return {
+        "service": "Nitro Infinity AI Engine",
+        "status": "online",
+        "version": "1.0.0",
+        "endpoints": {
+            "chat": "POST /api/v1/chat",
+            "health": "GET /api/v1/health",
+            "bots": "GET /api/v1/bots",
+            "models": "GET /api/v1/models",
+            "docs": "GET /docs",
+            "server_guard": "POST /api/v1/server-guard/detect",
+        },
+    }
+
+
+@app.get("/health")
+def health() -> dict:
+    return {
+        "status": "ok",
+        "service": "nitro-infinity-ai",
+        "version": "1.0.0",
+        "engine": "Nitro Brain Core",
+    }
+
+
+@app.get("/bots")
+def list_bots(query: str = "") -> dict:
+    bots_list = BOT_MARKET.list_bots()
+    from legacy.bots_engine import filter_bots
+    return {"ok": True, "bots": filter_bots(bots_list, query)}
